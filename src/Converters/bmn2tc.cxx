@@ -46,6 +46,10 @@ int main(int argc, char **argv)
    TDatabasePDG* pDB = new TDatabasePDG();
    TVector3 pPSDMomentum, pPSDPosition;
 
+   const Double_t minPt = 0.2;
+   const Int_t run = 1;
+   const Int_t date = 290119;
+
    if (argc < 4)
    {
       std::cerr << "./bmn2tc -i INPUTFILE -o OUTPUTFILE [OPTIONAL: -v 0,1,2 (verbosity level)]" << std::endl;
@@ -167,7 +171,7 @@ int main(int argc, char **argv)
    Int_t nMultPrim, nMultALL, ntracks,
           nMultPart, nMultSp, PDG, Charge, nModule;
 
-   Double_t P, Pz, Pt, eta, Etot, Energy;
+   Double_t P, Pz, Pt, eta, Etot, Energy, fB;
 
    TChain* inFile = new TChain("cbmsim");
    inFile->Add(inFileName.Data());
@@ -188,49 +192,99 @@ int main(int argc, char **argv)
    CbmMCTrack* mcTrack = nullptr;
    BmnZdcPoint* psdPoint = nullptr;
 
+   /////////////////////////////////////////////////////////
     for (Int_t iEv = 0; iEv < inFile->GetEntries(); iEv++) {
-        inFile->GetEntry(iEv);
+      inFile->GetEntry(iEv);
 
-        std::cout << "\tEvent: " << iEv << "\t"
-                  << timer.RealTime() << std::endl;
-        timer.Continue();
+      fB = fairEvent->GetB();
+      ntracks = stsTracks->GetEntriesFast();
 
+      if (verbosity  == 0 )
+       std::cout << "\tEvent: " << iEv << "\t"
+                 << "time: " << timer.RealTime() << std::endl;
+       timer.Continue();
+       if (verbosity  != 0 )
+       std::cout << "\tEvent: " << iEv << "\t"
+                 << "B: " << fB << "\t"
+                 << "Ntracks: " << ntracks << "\t"
+                 << "Total Real Time: " << timer.RealTime() << std::endl;
+       timer.Continue();
 
-        ntracks = stsTracks->GetEntriesFast();
+       //Save current Object count
+       ObjectNumber = TProcessID::GetObjectCount();
+       event->GetHighPt()->Delete();
+       event->GetMuons()->Delete();
+       event->Clear();
 
-        // hMultALL->Fill(ntracks);
-        nMultPrim = 0;
-        nMultALL  = 0;
-        nMultPart = 0;
-        nMultSp   = 0;
+       event->SetB(fB);
+       event->SetHeader(iEv, run, date);
+       if (ntracks <= 0)
+         continue;
 
-        for (Int_t iTrack = 0; iTrack < ntracks; iTrack++) {
-            mcTrack = (CbmMCTrack*) stsTracks->UncheckedAt(iTrack);
-            PDG = mcTrack->GetPdgCode();
+       // hMultALL->Fill(ntracks);
+       nMultPrim = 0;
+       nMultALL  = 0;
+       nMultPart = 0;
+       nMultSp   = 0;
 
-            // std::cout << "Track" << iTrack << "|" << PDG << " ";
-            if (pDB->GetParticle(PDG))
-              Charge = pDB->GetParticle(PDG)->Charge()/3;
-            else
-              Charge = 0;
-            P = mcTrack->GetP();
-            Pt = mcTrack->GetPt();
-            Pz = mcTrack->GetPz();
-            eta = 0.5*TMath::Log((P+Pz)/(P-Pz));
-        }//Track loop
+       for (Int_t iTrack = 0; iTrack < ntracks; iTrack++) {
+           mcTrack = (CbmMCTrack*) stsTracks->UncheckedAt(iTrack);
+           PDG = mcTrack->GetPdgCode();
+           // std::cout << "Track" << iTrack << "|" << PDG << " ";
+           if (pDB->GetParticle(PDG))
+             Charge = pDB->GetParticle(PDG)->Charge()/3;
+           else
+             Charge = -999;
+           //P = mcTrack->GetP();
+           //Pt = mcTrack->GetPt();
+           //Pz = mcTrack->GetPz();
+           //eta = 0.5*TMath::Log((P+Pz)/(P-Pz));
+           event->AddTrack(PDG, mcTrack->GetEnergy(),
+                           mcTrack->GetPx(), mcTrack->GetPy(), mcTrack->GetPz(),
+                           mcTrack->GetMass(), Charge, minPt);
+       }//Track loop
 
-        bPSD->GetEntry(iEv);
-        Etot = 0;
-        for (Int_t ihit=0; ihit<listPSDpoints->GetEntries(); ihit++) {
-	  psdPoint = (BmnZdcPoint*) listPSDpoints->At(ihit);
-          if (!psdPoint) continue;
-          psdPoint->Momentum(pPSDMomentum);
-          psdPoint->Position(pPSDPosition);
-          Energy = psdPoint->GetEnergyLoss();
-          nModule = psdPoint->GetCopyMother();
-          Etot += Energy;
-        }//PSD loop
+       bPSD->GetEntry(iEv);
+       Etot = 0;
+       for (Int_t ihit=0; ihit<listPSDpoints->GetEntries(); ihit++) {
+         psdPoint = (BmnZdcPoint*) listPSDpoints->At(ihit);
+         if (!psdPoint) continue;
+         psdPoint->Momentum(pPSDMomentum);
+         psdPoint->Position(pPSDPosition);
+         Energy = psdPoint->GetEnergyLoss();
+         nModule = psdPoint->GetCopyMother();
+         Etot += Energy;
+       }//PSD loop
+       //Restore Object count
+       //To save space in the table keeping track of all referenced objects
+       //we assume that our events do not address each other. We reset the
+       //object count to what it was at the beginning of the event.
+       TProcessID::SetObjectCount(ObjectNumber);
+       nb += tree->Fill(); //fill the tree
+       if (iEv % printev == 0 && verbosity == 1) event->Print();
+       if (iEv % printev == 0 && verbosity == 2) event->Print("all");
     }    //Event loop
 
+   hfile = tree->GetCurrentFile(); //just in case we switched to a new file
+   hfile->Write();
+   tree->Print();
+   // We own the event (since we set the branch address explicitly), we need to delete it.
+   delete event;
+   event = 0;
+
+   //  Stop timer and print results
+   timer.Stop();
+   Float_t mbytes = 0.000001 * nb;
+   Double_t rtime = timer.RealTime();
+   Double_t ctime = timer.CpuTime();
+
+   printf("\n%d events and %lld bytes processed.\n", nevent, nb);
+   printf("RealTime=%f seconds, CpuTime=%f seconds\n", rtime, ctime);
+   printf("compression level=%d, split=%d, IMT=%d, compression algorithm=%d\n", comp, split,
+          enable_imt, compAlg);
+   printf("You write %f Mbytes/Realtime seconds\n", mbytes / rtime);
+   printf("You write %f Mbytes/Cputime seconds\n", mbytes / ctime);
+   //printf("file compression factor = %f\n",hfile.GetCompressionFactor());
+   hfile->Close();
    return 0;
 }
