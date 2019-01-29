@@ -31,7 +31,7 @@ private:
   TClonesArray *fTracks; //->array with all tracks
   TRefArray *fHighPt;    //array of High Pt tracks only
   TRefArray *fMuons;     //array of Muon tracks only
-  TRefArray *fGEMS;      //array of GEM tracks only
+  //TRefArray *fGEMS;      //array of GEM tracks only
   TRef fLastTrack;       //reference pointer to last track
   TBits fTriggerBits;    //Bits triggered by this event.
 

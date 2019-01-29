@@ -9,6 +9,7 @@
 #include "TNetFile.h"
 #include "TRandom.h"
 #include "TTree.h"
+#include "TProcessID.h"
 #include "TTreePerfStats.h"
 #include "TBranch.h"
 #include "TClonesArray.h"
